@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>FMV Engine — Multi-Layer Edition</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div id="fetch-progress"></div>
+<div id="ctx">
+  <div class="ctx-item" onclick="setPoint('in')">POSER ENTRÉE (IN)</div>
+  <div class="ctx-item" onclick="setPoint('out')">POSER SORTIE (OUT)</div>
+</div>
+
+<div id="toast"></div>
+
+<div id="video-picker" onclick="closeVideoPicker(event)">
+  <div id="video-picker-box" onclick="event.stopPropagation()">
+    <h3>Charger une vidéo (Layer actif)</h3>
+    <div id="video-picker-list"></div>
+    <input type="text" id="video-picker-url" class="field" placeholder="...ou coller une nouvelle URL">
+    <div id="video-picker-actions">
+      <button class="pbtn accent" onclick="loadFromPicker()">CHARGER CETTE URL</button>
+      <button class="pbtn" onclick="closeVideoPicker()">ANNULER</button>
+    </div>
+  </div>
+</div>
+
+<div id="viewport">
+  <video id="player-0" class="layer" data-layer="0" playsinline crossorigin="anonymous"></video>
+  <video id="player-1" class="layer" data-layer="1" playsinline crossorigin="anonymous"></video>
+  <video id="player-2" class="layer" data-layer="2" playsinline crossorigin="anonymous"></video>
+
+  <div id="pause-overlay">
+    <h2>PAUSE</h2>
+    <p>Cliquez pour reprendre le jeu</p>
+  </div>
+
+  <div id="gamepad-hint"></div>
+  <button id="panel-toggle" style="position:absolute;top:15px;right:15px;z-index:2000; padding:8px 15px; background:rgba(0,0,0,0.7); color:#00f2ff; border:1px solid #00f2ff; cursor:pointer; font-weight:900; border-radius:4px;" onclick="togglePanel()">EDITEUR ☰</button>
+
+  <div id="panel">
+    <div class="p-section" style="background: rgba(232,160,50,0.05)">
+      <div class="p-title" style="color:#e8a032">Scène Active</div>
+      <select id="scene-select" class="field" onchange="selectScene(this.value)"></select>
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <button class="pbtn" onclick="addScene()">+ NOUVELLE</button>
+        <button class="pbtn" onclick="renameScene()">RENOMMER</button>
+        <button class="pbtn" onclick="deleteScene()">SUPPRIMER</button>
+      </div>
+      <div style="font-size:9px;color:#555;margin-top:8px">
+        Une scène = configuration complète des 3 layers + ses jumps. Charger une scène remplace tous les layers.
+      </div>
+      <div style="display:flex;gap:6px;margin-top:8px;align-items:center">
+        <button class="pbtn accent" onclick="setCurrentSceneAsStartup()">DEFINIR AU LANCEMENT</button>
+        <span style="font-size:10px;color:#aaa">Démarrage: <strong id="startup-scene-label">-</strong></span>
+      </div>
+      <datalist id="scene-datalist"></datalist>
+    </div>
+
+    <div class="p-section">
+      <div class="p-title">Layer Actif (éditeur)</div>
+      <div style="display:flex;gap:6px">
+        <button class="layer-btn" data-layer="0">LAYER 0</button>
+        <button class="layer-btn" data-layer="1">LAYER 1</button>
+        <button class="layer-btn" data-layer="2">LAYER 2</button>
+      </div>
+      <div style="font-size:9px;color:#555;margin-top:8px">
+        Layer 0 = fond (z:1) · Layer 1 = milieu (z:2) · Layer 2 = dessus (z:3)
+      </div>
+    </div>
+
+    <div class="p-section">
+      <div class="p-title">Vidéo Source (Layer actif)</div>
+      <button class="pbtn accent" onclick="fetchVideoUrl()">+ CHARGER NOUVELLE URL</button>
+      <div id="src-info" style="font-size:9px;color:#444;margin-top:8px;word-break:break-all">Aucune source chargée</div>
+    </div>
+
+    <div class="p-section">
+      <div class="p-title">Menu Videos (Layer actif)</div>
+      <div class="p-row">
+        <input type="text" id="playlist-url" class="field" placeholder="URL video a ajouter">
+      </div>
+      <button class="pbtn" onclick="addVideoToPlaylist()">+ AJOUTER AU MENU</button>
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <button class="pbtn" style="margin-top:0" onclick="goToPreviousVideo()">VIDEO PRECEDENTE</button>
+        <button class="pbtn" style="margin-top:0" onclick="goToNextVideo()">VIDEO SUIVANTE</button>
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;margin-top:10px;color:#aaa;font-size:10px">
+        <input type="checkbox" id="playlist-loop" onchange="updateCurrentVideoLoop()" style="accent-color:#00f2ff">
+        Loop sur la video selectionnee
+      </label>
+      <div id="playlist-list" style="margin-top:10px"></div>
+    </div>
+
+    <div class="p-section">
+      <div class="p-title">Audio par Layer</div>
+      <div id="audio-controls"></div>
+    </div>
+
+    <div class="p-section" style="background: rgba(0,242,255,0.03)">
+      <div class="p-title" style="color:#00f2ff">Rehausseur Couleurs (Global)</div>
+      <div class="p-slider-label"><span>Saturation</span><span id="val-sat">140%</span></div>
+      <input type="range" id="v-sat" class="vivid-slider" min="0" max="300" value="140" oninput="updateVideoFilters()">
+      <div class="p-slider-label"><span>Contraste</span><span id="val-con">110%</span></div>
+      <input type="range" id="v-con" class="vivid-slider" min="50" max="200" value="110" oninput="updateVideoFilters()">
+      <div class="p-slider-label"><span>Luminosité</span><span id="val-lum">105%</span></div>
+      <input type="range" id="v-lum" class="vivid-slider" min="50" max="150" value="105" oninput="updateVideoFilters()">
+    </div>
+
+    <div class="p-section">
+      <div class="p-title">Timing & Touche</div>
+      <div class="p-row">
+        <span class="p-label">IN</span> <input type="number" id="cfg-in" class="field" oninput="syncActive()">
+        <span class="p-label">OUT</span> <input type="number" id="cfg-out" class="field" oninput="syncActive()">
+      </div>
+      <select id="cfg-btn" class="field" onchange="syncActive()">
+        <option value="-1">AUTO (sans bouton)</option>
+        <option value="0">BOUTON A (Vert)</option>
+        <option value="1">BOUTON B (Rouge)</option>
+        <option value="2">BOUTON X (Bleu)</option>
+        <option value="3">BOUTON Y (Jaune)</option>
+        <option value="12">PAD HAUT</option><option value="13">PAD BAS</option>
+        <option value="14">PAD GAUCHE</option><option value="15">PAD DROITE</option>
+      </select>
+      <div class="p-row" style="margin-top:8px">
+        <span class="p-label">SRC</span>
+        <select id="cfg-source-layer" class="field" onchange="syncActive()" title="Layer dont le temps définit IN/OUT">
+          <option value="0">Layer 0</option>
+          <option value="1">Layer 1</option>
+          <option value="2">Layer 2</option>
+        </select>
+        <span class="p-label">TGT</span>
+        <select id="cfg-target-layer" class="field" onchange="syncActive()" title="Layer où l'action s'applique">
+          <option value="0">Layer 0</option>
+          <option value="1">Layer 1</option>
+          <option value="2">Layer 2</option>
+        </select>
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;margin-top:8px;color:#aaa;font-size:10px">
+        <input type="checkbox" id="cfg-loop" onchange="syncActive()" style="accent-color:#00f2ff">
+        Zone bouclée (menu) — reboucle IN→OUT tant qu'aucune action
+      </label>
+    </div>
+
+    <div class="p-section" style="background: rgba(42,170,100,0.05)">
+      <div class="p-title" style="color:#2a6">SI RÉUSSI</div>
+      <select id="cfg-s-mode" class="field" onchange="syncActive()">
+        <option value="none">Rien (Continuer)</option>
+        <option value="jump">Sauter à la Frame</option>
+        <option value="video">Charger Vidéo URL</option>
+        <option value="scene">Charger Scène</option>
+      </select>
+      <input type="text" id="cfg-s-dest" class="field" placeholder="Destination (URL, frame, nom scène)" style="margin-top:6px" oninput="syncActive()" list="playlist-datalist">
+    </div>
+
+    <div class="p-section" style="background: rgba(224,5,80,0.05)">
+      <div class="p-title" style="color:#e05">SI ÉCHEC (ignoré si zone bouclée)</div>
+      <select id="cfg-f-mode" class="field" onchange="syncActive()">
+        <option value="none">Rien (Continuer)</option>
+        <option value="jump">Sauter à la Frame</option>
+        <option value="video">Charger Vidéo URL</option>
+        <option value="scene">Charger Scène</option>
+      </select>
+      <input type="text" id="cfg-f-dest" class="field" placeholder="Destination (URL, frame, nom scène)" style="margin-top:6px" oninput="syncActive()" list="playlist-datalist">
+      <datalist id="playlist-datalist"></datalist>
+    </div>
+
+    <div class="p-section">
+      <button class="pbtn accent" onclick="addJump()">+ CRÉER CE SAUT</button>
+      <div id="jump-list" style="margin-top:15px"></div>
+    </div>
+
+    <div class="p-section">
+      <button class="pbtn green" onclick="exportJSON()">↓ EXPORTER DATA.JSON</button>
+      <label class="pbtn" style="display:block;margin-top:6px;cursor:pointer;background:#222">
+        ↑ IMPORTER DATA.JSON <input type="file" id="f-import" style="display:none" accept=".json">
+      </label>
+    </div>
+  </div>
+</div>
+
+<div id="bottom">
+  <div id="timeline-wrap">
+    <input type="range" id="seek-bar" value="0">
+    <div id="zone-bar"><div id="zone-vis"></div></div>
+  </div>
+  <div id="transport">
+    <div class="tc"><span>FRAME </span><span id="cur-frame">0</span></div>
+    <div class="tc"><span>TOTAL </span><span id="total-frames">0</span></div>
+    <button class="tbtn" onclick="stepFrame(-1)">-1</button>
+    <button class="tbtn" id="btn-play" onclick="playPause()">PLAY / PAUSE</button>
+    <button class="tbtn" onclick="stepFrame(1)">+1</button>
+    <button class="tbtn" onclick="goToPreviousVideo()">VIDEO -</button>
+    <button class="tbtn" onclick="goToNextVideo()">VIDEO +</button>
+    <button class="tbtn" id="btn-mode" onclick="toggleMode()" style="border-color:#555">MODE ÉDITION</button>
+  </div>
+</div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

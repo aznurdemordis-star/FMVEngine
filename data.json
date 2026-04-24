@@ -1,0 +1,197 @@
+{
+  "version": 3,
+  "currentSceneIdx": 0,
+  "startupSceneIdx": 1,
+  "scenes": [
+    {
+      "name": "Scene 1",
+      "layers": [
+        {
+          "playlist": [
+            {
+              "url": "./ssstwitter.com_1776962497358.mp4",
+              "loop": false
+            }
+          ],
+          "startVideoIndex": 0,
+          "volume": 1,
+          "muted": false
+        },
+        {
+          "playlist": [],
+          "startVideoIndex": 0,
+          "volume": 1,
+          "muted": false
+        },
+        {
+          "playlist": [],
+          "startVideoIndex": 0,
+          "volume": 1,
+          "muted": false
+        }
+      ],
+      "jumps": [
+        {
+          "in": 34,
+          "out": 41,
+          "btn": 0,
+          "sourceLayer": 0,
+          "targetLayer": 0,
+          "loop": false,
+          "sMode": "none",
+          "sDest": "",
+          "fMode": "jump",
+          "fDest": "1"
+        },
+        {
+          "in": 65,
+          "out": 74,
+          "btn": 3,
+          "sourceLayer": 0,
+          "targetLayer": 0,
+          "loop": false,
+          "sMode": "none",
+          "sDest": "",
+          "fMode": "jump",
+          "fDest": "1"
+        },
+        {
+          "in": 87,
+          "out": 91,
+          "btn": 2,
+          "sourceLayer": 0,
+          "targetLayer": 0,
+          "loop": false,
+          "sMode": "none",
+          "sDest": "",
+          "fMode": "jump",
+          "fDest": "1"
+        },
+        {
+          "in": 156,
+          "out": 163,
+          "btn": 1,
+          "sourceLayer": 0,
+          "targetLayer": 0,
+          "loop": false,
+          "sMode": "none",
+          "sDest": "",
+          "fMode": "none",
+          "fDest": "1"
+        },
+        {
+          "in": 120,
+          "out": 125,
+          "btn": 3,
+          "sourceLayer": 0,
+          "targetLayer": 0,
+          "loop": false,
+          "sMode": "none",
+          "sDest": "",
+          "fMode": "jump",
+          "fDest": "1"
+        },
+        {
+          "in": 194,
+          "out": 204,
+          "btn": 15,
+          "sourceLayer": 0,
+          "targetLayer": 0,
+          "loop": false,
+          "sMode": "none",
+          "sDest": "",
+          "fMode": "jump",
+          "fDest": "1"
+        },
+        {
+          "in": 375,
+          "out": 376,
+          "btn": -1,
+          "sourceLayer": 0,
+          "targetLayer": 1,
+          "loop": false,
+          "sMode": "scene",
+          "sDest": "Scene 2",
+          "fMode": "none",
+          "fDest": ""
+        }
+      ]
+    },
+    {
+      "name": "Scene 2",
+      "layers": [
+        {
+          "playlist": [
+            {
+              "url": "./menu.webm",
+              "loop": true
+            }
+          ],
+          "startVideoIndex": 0,
+          "volume": 1,
+          "muted": false
+        },
+        {
+          "playlist": [
+            {
+              "url": "./menupass1.webm",
+              "loop": false
+            }
+          ],
+          "startVideoIndex": 0,
+          "volume": 1,
+          "muted": false
+        },
+        {
+          "playlist": [],
+          "startVideoIndex": 0,
+          "volume": 1,
+          "muted": false
+        }
+      ],
+      "jumps": [
+        {
+          "in": 25,
+          "out": 48,
+          "btn": 0,
+          "sourceLayer": 1,
+          "targetLayer": 0,
+          "loop": true,
+          "sMode": "scene",
+          "sDest": "Scene 1",
+          "fMode": "none",
+          "fDest": ""
+        },
+        {
+          "in": 0,
+          "out": 22,
+          "btn": 12,
+          "sourceLayer": 1,
+          "targetLayer": 1,
+          "loop": true,
+          "sMode": "jump",
+          "sDest": "27",
+          "fMode": "none",
+          "fDest": ""
+        },
+        {
+          "in": 25,
+          "out": 48,
+          "btn": 13,
+          "sourceLayer": 1,
+          "targetLayer": 1,
+          "loop": true,
+          "sMode": "jump",
+          "sDest": "2",
+          "fMode": "none",
+          "fDest": ""
+        }
+      ]
+    }
+  ],
+  "filters": {
+    "sat": "140",
+    "con": "110",
+    "lum": "105"
+  }
+}

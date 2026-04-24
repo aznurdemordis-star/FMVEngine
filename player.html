@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>FMV Player</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; }
+  body { background: #000; overflow: hidden; font-family: monospace; }
+
+  #viewport {
+    position: fixed;
+    inset: 0;
+    background: #000;
+  }
+
+  video.layer {
+    position: absolute;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    object-fit: contain;
+    display: block;
+    background: transparent;
+    pointer-events: none;
+  }
+
+  #player-0 { z-index: 1; }
+  #player-1 { z-index: 2; }
+  #player-2 { z-index: 3; }
+
+  #gamepad-hint {
+    position: fixed; bottom: 50px; right: 50px; width: 80px; height: 80px;
+    background: rgba(0,0,0,0.8); border: 4px solid #444; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 26px; font-weight: 900; color: #fff; opacity: 0;
+    transform: scale(0.5); transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    z-index: 100; pointer-events: none;
+  }
+  #gamepad-hint.active { opacity: 1; transform: scale(1); }
+
+  #pause-overlay {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.6); display: none; flex-direction: column;
+    justify-content: center; align-items: center; z-index: 200;
+    backdrop-filter: blur(4px); cursor: pointer;
+  }
+  #pause-overlay h2 { color: #00f2ff; font-size: 40px; text-shadow: 0 0 20px #00f2ff; margin-bottom: 10px; }
+  #pause-overlay p { color: #fff; font-size: 14px; }
+
+  #toast {
+    position: fixed; bottom: 60px; left: 50%; transform: translateX(-50%);
+    background: #00f2ff; color: #000; padding: 8px 20px; border-radius: 4px;
+    font-weight: 900; font-size: 13px; opacity: 0; transition: 0.2s;
+    z-index: 300; pointer-events: none;
+    box-shadow: 0 0 20px rgba(0,242,255,0.5);
+  }
+
+  #loading {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: #000; display: flex; align-items: center; justify-content: center;
+    color: #00f2ff; font-size: 14px; z-index: 500;
+    flex-direction: column; gap: 16px;
+  }
+  #loading-bar-wrap { width: 300px; height: 3px; background: #111; border-radius: 2px; }
+  #loading-bar { height: 100%; width: 0%; background: #00f2ff; border-radius: 2px; box-shadow: 0 0 10px #00f2ff; transition: width 0.1s; }
+</style>
+</head>
+<body>
+
+<div id="loading">
+  <span id="loading-label">CHARGEMENT...</span>
+  <div id="loading-bar-wrap"><div id="loading-bar"></div></div>
+</div>
+
+<div id="viewport">
+  <video id="player-0" class="layer" playsinline crossorigin="anonymous"></video>
+  <video id="player-1" class="layer" playsinline crossorigin="anonymous"></video>
+  <video id="player-2" class="layer" playsinline crossorigin="anonymous"></video>
+</div>
+
+<div id="gamepad-hint"></div>
+<div id="pause-overlay" onclick="resumeGame()">
+  <h2>PAUSE</h2>
+  <p>Cliquez pour reprendre</p>
+</div>
+<div id="toast"></div>
+
+<script>
+const FPS = 25;
+const LAYER_COUNT = 3;
+const AUTO_TRIGGER_BTN = -1;
+const BTN_MAP = { 0: "A", 1: "B", 2: "X", 3: "Y", 12: "↑", 13: "↓", 14: "←", 15: "→", [-1]: "AUTO" };
+const BTN_COLOR_MAP = { 0: "#2a6", 1: "#e05", 2: "#00f2ff", 3: "#e8a032", [-1]: "#9cf000", default: "#888" };
+
+const videos = Array.from({ length: LAYER_COUNT }, (_, i) => document.getElementById(`player-${i}`));
+const padHint = document.getElementById('gamepad-hint');
+const pauseOverlay = document.getElementById('pause-overlay');
+const loadingEl = document.getElementById('loading');
+const loadingBar = document.getElementById('loading-bar');
+const loadingLabel = document.getElementById('loading-label');
+
+let scenes = [];
+let currentSceneIdx = 0;
+let startupSceneIdx = 0;
+let filters = null;
+let jumpRuntime = {};
+let pendingLoads = 0;
+let startWasPressed = false;
+let presentedFrames = Array.from({ length: LAYER_COUNT }, () => -1);
+
+function makeLayer() {
+  return {
+    playlist: [],
+    startVideoIndex: 0,
+    currentVideoIndex: -1,
+    currentSourceUrl: "",
+    volume: 1,
+    muted: false,
+  };
+}
+
+function makeScene(name) {
+  return {
+    name,
+    layers: Array.from({ length: LAYER_COUNT }, makeLayer),
+    jumps: [],
+  };
+}
+
+function currentScene() {
+  return scenes[currentSceneIdx];
+}
+
+function normalizePlaylist(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw.map(item => {
+    if (typeof item === 'string') return { url: item, loop: false };
+    return { url: item?.url || "", loop: !!item?.loop };
+  }).filter(item => item.url);
+}
+
+function clampIndex(index, length) {
+  if (!length) return 0;
+  return Math.max(0, Math.min(typeof index === 'number' ? index : 0, length - 1));
+}
+
+function normalizeJump(j) {
+  return {
+    in: typeof j?.in === 'number' ? j.in : 0,
+    out: typeof j?.out === 'number' ? j.out : 0,
+    btn: typeof j?.btn === 'number' ? j.btn : 0,
+    sourceLayer: typeof j?.sourceLayer === 'number' ? j.sourceLayer : 0,
+    targetLayer: typeof j?.targetLayer === 'number' ? j.targetLayer : 0,
+    loop: !!j?.loop,
+    sMode: j?.sMode || 'none',
+    sDest: j?.sDest == null ? '' : String(j.sDest),
+    fMode: j?.fMode || 'none',
+    fDest: j?.fDest == null ? '' : String(j.fDest),
+  };
+}
+
+function sceneFromData(src, fallbackName) {
+  const scene = makeScene(src?.name || fallbackName);
+  if (Array.isArray(src?.layers)) {
+    src.layers.slice(0, LAYER_COUNT).forEach((layerSrc, i) => {
+      const layer = scene.layers[i];
+      layer.playlist = normalizePlaylist(layerSrc?.playlist);
+      layer.startVideoIndex = clampIndex(layerSrc?.startVideoIndex, layer.playlist.length);
+      layer.volume = typeof layerSrc?.volume === 'number' ? layerSrc.volume : 1;
+      layer.muted = !!layerSrc?.muted;
+    });
+  }
+  scene.jumps = Array.isArray(src?.jumps) ? src.jumps.map(normalizeJump) : [];
+  return scene;
+}
+
+function getPlaylistUrlAt(index, layerIdx) {
+  const item = currentScene().layers[layerIdx]?.playlist[index];
+  return item ? item.url || "" : "";
+}
+
+function isPlaylistLoopAt(index, layerIdx) {
+  const item = currentScene().layers[layerIdx]?.playlist[index];
+  return !!item?.loop;
+}
+
+function setLayerVolume(layerIdx, value) {
+  const layer = currentScene().layers[layerIdx];
+  layer.volume = value;
+  videos[layerIdx].volume = value;
+}
+
+function setLayerMuted(layerIdx, muted) {
+  const layer = currentScene().layers[layerIdx];
+  layer.muted = muted;
+  videos[layerIdx].muted = muted;
+}
+
+function applyFilters() {
+  const filter = filters
+    ? `saturate(${filters.sat}%) contrast(${filters.con}%) brightness(${filters.lum}%)`
+    : 'none';
+  videos.forEach(v => { v.style.filter = filter; });
+}
+
+function updateLoading(delta, label) {
+  pendingLoads = Math.max(0, pendingLoads + delta);
+  if (label) loadingLabel.textContent = label;
+  loadingEl.style.display = pendingLoads > 0 ? 'flex' : 'none';
+  if (pendingLoads <= 0) loadingBar.style.width = '0%';
+}
+
+function getPresentedFrame(video, metadata) {
+  if (metadata && typeof metadata.mediaTime === 'number') {
+    return Math.floor(metadata.mediaTime * FPS);
+  }
+  return Math.floor((video.currentTime || 0) * FPS);
+}
+
+function handlePresentedFrame(video, idx, frame) {
+  presentedFrames[idx] = frame;
+
+  const scene = currentScene();
+  if (!scene) return;
+
+  const loopJump = scene.jumps.find((j, jumpIdx) => {
+    if (!j.loop || (j.sourceLayer ?? 0) !== idx) return false;
+    const rt = jumpRuntime[jumpIdx] || { acted: false };
+    return !rt.acted && frame >= j.out;
+  });
+
+  if (loopJump) {
+    video.currentTime = loopJump.in / FPS;
+    if (video.paused) video.play().catch(() => {});
+  }
+}
+
+function attachPresentedFrameTracking(video, idx) {
+  if (typeof video.requestVideoFrameCallback !== 'function') return;
+
+  const onFrame = (_now, metadata) => {
+    handlePresentedFrame(video, idx, getPresentedFrame(video, metadata));
+    video.requestVideoFrameCallback(onFrame);
+  };
+
+  video.requestVideoFrameCallback(onFrame);
+}
+
+async function fetchVideo(url, layerIdx = 0) {
+  if (!url) return;
+  const video = videos[layerIdx];
+  const layer = currentScene().layers[layerIdx];
+  updateLoading(1, `CHARGEMENT LAYER ${layerIdx}...`);
+  loadingBar.style.width = '0%';
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const total = parseInt(resp.headers.get('content-length') || '0', 10);
+    const reader = resp.body && resp.body.getReader ? resp.body.getReader() : null;
+    const chunks = [];
+    let loaded = 0;
+
+    if (reader) {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        loaded += value.length;
+        if (total) loadingBar.style.width = (loaded / total * 100) + '%';
+      }
+    } else {
+      const ab = await resp.arrayBuffer();
+      chunks.push(new Uint8Array(ab));
+      loadingBar.style.width = '100%';
+    }
+
+    const mime = url.toLowerCase().endsWith('.webm') ? 'video/webm' : 'video/mp4';
+    video.src = URL.createObjectURL(new Blob(chunks, { type: mime }));
+    layer.currentSourceUrl = url;
+
+    const idx = layer.playlist.findIndex(item => item.url === url);
+    layer.currentVideoIndex = idx !== -1 ? idx : -1;
+    video.loop = idx !== -1 ? isPlaylistLoopAt(idx, layerIdx) : false;
+  } catch (e) {
+    console.error(e);
+    toast(`Erreur chargement Layer ${layerIdx}`);
+  } finally {
+    updateLoading(-1);
+  }
+}
+
+function clearLayerVideo(layerIdx) {
+  const layer = currentScene().layers[layerIdx];
+  const video = videos[layerIdx];
+  video.pause();
+  video.removeAttribute('src');
+  video.load();
+  video.loop = false;
+  layer.currentSourceUrl = "";
+  layer.currentVideoIndex = -1;
+}
+
+function goToNextVideo(layerIdx = 0) {
+  const layer = currentScene().layers[layerIdx];
+  if (!layer.playlist.length) return;
+  if (layer.currentVideoIndex === -1) layer.currentVideoIndex = 0;
+  else layer.currentVideoIndex = (layer.currentVideoIndex + 1) % layer.playlist.length;
+  fetchVideo(getPlaylistUrlAt(layer.currentVideoIndex, layerIdx), layerIdx);
+}
+
+async function loadScene(idx) {
+  if (idx < 0 || idx >= scenes.length) return;
+  currentSceneIdx = idx;
+  jumpRuntime = {};
+  presentedFrames.fill(-1);
+
+  const scene = currentScene();
+  updateLoading(1, `CHARGEMENT SCENE : ${scene.name}`);
+  try {
+    for (let i = 0; i < LAYER_COUNT; i++) {
+      const layer = scene.layers[i];
+      setLayerVolume(i, layer.volume);
+      setLayerMuted(i, layer.muted);
+      if (layer.playlist.length) {
+        layer.currentVideoIndex = layer.startVideoIndex;
+        await fetchVideo(getPlaylistUrlAt(layer.startVideoIndex, i), i);
+      } else {
+        clearLayerVideo(i);
+      }
+    }
+  } finally {
+    updateLoading(-1);
+  }
+}
+
+function loadSceneByName(name) {
+  const idx = scenes.findIndex(scene => scene.name === name);
+  if (idx === -1) {
+    toast(`Scene introuvable : ${name}`);
+    return;
+  }
+  loadScene(idx);
+}
+
+function executeAction(mode, dest, targetLayer = 0) {
+  if (mode === 'none' || !dest) return;
+  if (mode === 'jump') {
+    const v = videos[targetLayer];
+    if (v) v.currentTime = parseInt(dest, 10) / FPS;
+  } else if (mode === 'video') {
+    fetchVideo(dest, targetLayer);
+  } else if (mode === 'scene') {
+    loadSceneByName(dest);
+  }
+}
+
+function checkGamepad() {
+  const gp = navigator.getGamepads?.()[0];
+  const startPressed = !!gp?.buttons?.[9]?.pressed;
+  if (startPressed && !startWasPressed) {
+    togglePause();
+  }
+  startWasPressed = startPressed;
+
+  if (document.hidden) {
+    padHint.classList.remove('active');
+    requestAnimationFrame(checkGamepad);
+    return;
+  }
+
+  let hintShown = false;
+  const scene = currentScene();
+  const jumps = scene?.jumps || [];
+
+  jumps.forEach((j, idx) => {
+    const srcLayer = j.sourceLayer ?? 0;
+    const tgtLayer = j.targetLayer ?? 0;
+    const srcVideo = videos[srcLayer];
+    if (!srcVideo || !srcVideo.src) return;
+
+    const presented = presentedFrames[srcLayer];
+    const f = presented >= 0 ? presented : Math.floor(srcVideo.currentTime * FPS);
+    const inside = f >= j.in && f <= j.out;
+    const rt = jumpRuntime[idx] || { acted: false, wasInside: false, lastFrame: -1 };
+    const crossedInto = rt.lastFrame < j.in && f >= j.in;
+
+    if (inside && !rt.wasInside) rt.acted = false;
+    if (crossedInto) rt.acted = false;
+
+    if (inside && j.btn !== AUTO_TRIGGER_BTN && !hintShown) {
+      padHint.textContent = BTN_MAP[j.btn] || "?";
+      const color = BTN_COLOR_MAP[j.btn] || BTN_COLOR_MAP.default;
+      padHint.style.borderColor = color;
+      padHint.style.boxShadow = `0 0 40px ${color}aa`;
+      padHint.classList.add('active');
+      hintShown = true;
+    }
+
+    if ((inside || crossedInto) && j.btn === AUTO_TRIGGER_BTN && !rt.acted) {
+      rt.acted = true;
+      executeAction(j.sMode, j.sDest, tgtLayer);
+    } else if (inside && gp && gp.buttons[j.btn]?.pressed && !rt.acted) {
+      rt.acted = true;
+      toast("REUSSITE !");
+      executeAction(j.sMode, j.sDest, tgtLayer);
+    }
+
+    if (j.loop && !rt.acted && (inside || rt.wasInside) && f >= j.out) {
+      srcVideo.currentTime = j.in / FPS;
+      rt.wasInside = true;
+      rt.lastFrame = j.in;
+      jumpRuntime[idx] = rt;
+      return;
+    }
+
+    if (!inside && rt.wasInside && !rt.acted && !j.loop) {
+      toast("ECHEC...");
+      executeAction(j.fMode, j.fDest, tgtLayer);
+    }
+
+    rt.wasInside = inside;
+    rt.lastFrame = f;
+    jumpRuntime[idx] = rt;
+  });
+
+  if (!hintShown) padHint.classList.remove('active');
+  requestAnimationFrame(checkGamepad);
+}
+
+function toast(message) {
+  const t = document.getElementById('toast');
+  t.textContent = message;
+  t.style.opacity = 1;
+  setTimeout(() => { t.style.opacity = 0; }, 1500);
+}
+
+function resumeGame() {
+  pauseOverlay.style.display = 'none';
+  videos.forEach(v => { if (v.src) v.play().catch(() => {}); });
+}
+
+function togglePause() {
+  const isPaused = pauseOverlay.style.display === 'flex';
+  if (isPaused) {
+    resumeGame();
+  } else {
+    videos.forEach(v => v.pause());
+    pauseOverlay.style.display = 'flex';
+  }
+}
+
+window.addEventListener('blur', () => {
+  if (videos.some(v => v.src && !v.paused)) {
+    videos.forEach(v => v.pause());
+    pauseOverlay.style.display = 'flex';
+  }
+});
+
+videos.forEach((video, idx) => {
+  attachPresentedFrameTracking(video, idx);
+
+  video.addEventListener('timeupdate', () => {
+    if (typeof video.requestVideoFrameCallback === 'function') return;
+    handlePresentedFrame(video, idx, getPresentedFrame(video));
+  });
+
+  video.addEventListener('loadedmetadata', () => {
+    video.play().catch(() => {});
+  });
+
+  video.addEventListener('ended', () => {
+    if (video.loop) return;
+    const scene = currentScene();
+    if (!scene) return;
+
+    const loopJump = scene.jumps.find(j =>
+      (j.sourceLayer ?? 0) === idx &&
+      j.loop &&
+      j.in <= video.duration * FPS &&
+      j.out >= video.duration * FPS - 1
+    );
+
+    if (loopJump) {
+      video.currentTime = loopJump.in / FPS;
+      video.play().catch(() => {});
+      return;
+    }
+
+    const layer = scene.layers[idx];
+    if (layer.playlist.length > 1) goToNextVideo(idx);
+  });
+});
+
+async function loadProject() {
+  try {
+    updateLoading(1, 'CHARGEMENT DU PROJET...');
+    const resp = await fetch('data.json');
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const d = await resp.json();
+
+    filters = d.filters || null;
+    applyFilters();
+
+    if (Array.isArray(d.scenes)) {
+      scenes = d.scenes.map((scene, i) => sceneFromData(scene, `Scene ${i + 1}`));
+      startupSceneIdx = clampIndex(d.startupSceneIdx ?? d.currentSceneIdx ?? 0, scenes.length);
+    } else {
+      const scene = makeScene("Scene 1");
+      scene.layers[0].playlist = normalizePlaylist(d.playlist);
+      scene.layers[0].startVideoIndex = clampIndex(d.startVideoIndex, scene.layers[0].playlist.length);
+      scene.jumps = Array.isArray(d.jumps) ? d.jumps.map(normalizeJump) : [];
+      scenes = [scene];
+      startupSceneIdx = 0;
+    }
+
+    if (!scenes.length) scenes = [makeScene("Scene 1")];
+    await loadScene(startupSceneIdx);
+  } catch (e) {
+    console.error(e);
+    loadingLabel.textContent = 'Impossible de charger data.json';
+    loadingBar.style.width = '0%';
+    loadingEl.style.display = 'flex';
+  } finally {
+    updateLoading(-1);
+  }
+}
+
+window.resumeGame = resumeGame;
+
+checkGamepad();
+loadProject();
+</script>
+</body>
+</html>
